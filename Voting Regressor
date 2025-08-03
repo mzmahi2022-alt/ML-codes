@@ -1,0 +1,187 @@
+import os
+import pandas as pd
+import numpy as np
+import time
+import joblib
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import VotingRegressor, RandomForestRegressor, AdaBoostRegressor, GradientBoostingRegressor
+from xgboost import XGBRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error, mean_absolute_percentage_error, root_mean_squared_error, explained_variance_score
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+
+random_state=42
+df = pd.read_excel(r'C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\3.xlsx')
+
+
+
+features = ['wind_10m', 'msl', 'sst', 'cyclone_cat', 'fg10', 'hmax', 'wind_100m', 'wind_stress']
+X = df[features]
+y = df['sea_level']
+
+
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=random_state)
+from sklearn.preprocessing import PolynomialFeatures
+poly = PolynomialFeatures(degree=5, include_bias=False)
+X_train_poly = poly.fit_transform(X_train)
+X_test_poly = poly.transform(X_test)
+
+# Standardization
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train_poly)
+X_test = scaler.transform(X_test_poly)
+
+
+# Specify the folder to save results
+save_folder = f"voting_regressor_results_tree_boost{random_state}"
+os.makedirs(save_folder, exist_ok=True)
+
+# Define models
+models = {
+    "DecisionTree": DecisionTreeRegressor(),
+    "RandomForest": RandomForestRegressor(),
+    "AdaBoost": AdaBoostRegressor(),
+    "GradientBoosting": GradientBoostingRegressor(),
+    "XGBoost": XGBRegressor()
+}
+param_grids = {
+    "DecisionTree": {
+        "max_depth": [3, 5, 10, 15, 20, None],
+        "min_samples_split": [2, 5, 10, 15],
+        "min_samples_leaf": [1, 2, 4, 6, 8],
+        "max_features": ['auto', 'sqrt', 'log2', None]
+    },
+
+    "RandomForest": {
+        "n_estimators": [100, 200, 500, 1000],
+        "max_depth": [5, 10, 20, 30, None],
+        "min_samples_split": [2, 5, 10],
+        "min_samples_leaf": [1, 2, 4],
+        "max_features": ['sqrt', 'log2', None],
+        "bootstrap": [True, False]
+    },
+
+    "AdaBoost": {
+        "n_estimators": [50, 100, 200, 300],
+        "learning_rate": [0.001, 0.01, 0.1, 0.5, 1],
+        "loss": ['linear', 'square', 'exponential']
+    },
+
+    "GradientBoosting": {
+        "n_estimators": [100, 200, 300],
+        "learning_rate": [0.001, 0.01, 0.05, 0.1],
+        "max_depth": [3, 5, 10],
+        "min_samples_split": [2, 5, 10],
+        "min_samples_leaf": [1, 2, 4],
+        "subsample": [0.6, 0.8, 1.0],
+        "max_features": ['sqrt', 'log2', None]
+    },
+
+    "XGBoost": {
+        "n_estimators": [100, 200, 300],
+        "learning_rate": [0.001, 0.01, 0.1, 0.2],
+        "max_depth": [3, 5, 7, 10],
+        "subsample": [0.6, 0.8, 1.0],
+        "colsample_bytree": [0.6, 0.8, 1.0],
+        "gamma": [0, 0.1, 0.3, 0.5],
+        "reg_alpha": [0, 0.01, 0.1, 1],
+        "reg_lambda": [0.1, 1, 10]
+    }
+}
+
+best_models = {}
+all_cv_results = {}
+tuning_times = {}
+
+# Perform Grid Search with Cross-Validation for each model
+for name, model in models.items():
+    print(f"Tuning {name}...")
+
+    start_time = time.time()  # Start time for tuning
+    gcv = GridSearchCV(model, param_grids[name], cv=5, scoring='r2', verbose=2)
+    gcv.fit(X_train, y_train)
+    end_time = time.time()  # End time for tuning
+    
+    best_models[name] = gcv.best_estimator_
+    all_cv_results[name] = pd.DataFrame(gcv.cv_results_)
+
+    # Save best parameters and CV results
+    pd.DataFrame([gcv.best_params_]).to_csv(os.path.join(save_folder, f"best_params_{name}.csv"), index=False)
+    all_cv_results[name].to_csv(os.path.join(save_folder, f"cv_results_{name}.csv"), index=False)
+
+    # Save tuning time
+    tuning_times[name] = end_time - start_time
+
+
+# Create a voting regressor
+voting_regressor = VotingRegressor(estimators=[(name, best_models[name]) for name in best_models])
+voting_regressor.fit(X_train, y_train)
+best_models["VotingRegressor"] = voting_regressor
+
+
+
+# Save tuning times
+with open(os.path.join(save_folder, "tuning_times.txt"), "w") as file:
+    for model, time_taken in tuning_times.items():
+        file.write(f"{model}: {time_taken:.2f} seconds\n")
+
+# Save models
+for name, model in best_models.items():
+    joblib.dump
+    (model, os.path.join(save_folder, f"best_model_{name}.pkl"))
+def adjusted_r2(r2, n, p):
+    return 1 - (1 - r2) * (n - 1) / (n - p - 1)
+
+n, p = X.shape
+
+
+# Evaluate models
+metrics = {}
+y_whole_pred = {}
+for name, model in best_models.items():
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+    
+    
+    metrics[name] = {
+        "Train R2": r2_score(y_train, y_train_pred),
+        "Train Adj R2": adjusted_r2(r2_score(y_train, y_train_pred), len(y_train), p),
+        "Train RMSE": root_mean_squared_error(y_train, y_train_pred),
+        "Train MSE": mean_squared_error(y_train, y_train_pred),
+        "Train MAE": mean_absolute_error(y_train, y_train_pred),
+        "Train MAPE": mean_absolute_percentage_error(y_train, y_train_pred),
+        "Test R2": r2_score(y_test, y_test_pred),
+        "Test Adj R2": adjusted_r2(r2_score(y_test, y_test_pred), len(y_test), p),
+        "Test RMSE": root_mean_squared_error(y_test, y_test_pred),
+        "Test MSE": mean_squared_error(y_test, y_test_pred),
+        "Test MAE": mean_absolute_error(y_test, y_test_pred),
+        "Test MAPE": mean_absolute_percentage_error(y_test, y_test_pred),
+    }
+    
+    # Save individual model results
+    pd.DataFrame([metrics[name]]).to_csv(os.path.join(save_folder, f"metrics_{name}.csv"), index=False)
+    
+
+for name, model in best_models.items():
+    # Define the Excel file path for each model
+    excel_path = os.path.join(save_folder, f"{name}_predictions.xlsx")
+
+    with pd.ExcelWriter(excel_path) as writer:
+        # Save y_train and y_train_pred in one sheet
+        pd.DataFrame({"y_train": y_train, "y_train_pred": y_train_pred}).to_excel(writer, sheet_name="Train Predictions", index=False)
+        
+        # Save y_test and y_test_pred in another sheet
+        pd.DataFrame({"y_test": y_test, "y_test_pred": y_test_pred}).to_excel(writer, sheet_name="Test Predictions", index=False)
+        
+        
+
+print("Predictions saved successfully for all models!")
+# Save all metrics to a single CSV
+metrics_df = pd.DataFrame(metrics)
+metrics_df.to_csv(os.path.join(save_folder, "all_models_metrics.csv"), index=True)
+
+print("All models evaluated and results saved successfully.")
+metrics_df
