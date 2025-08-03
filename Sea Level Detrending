@@ -1,0 +1,70 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from scipy.signal import savgol_filter
+
+
+colors = {
+    'no_tide': "#E01212CF",        # Cool blue
+    'tidal': "#FF7F0E",           # Soft green
+    'original': "#0072B5"          # Bold red
+}
+
+
+
+file_paths = {
+    "Cox's Bazar": r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\Cox's_bazar_sea_Level.csv",
+    "Khepupara": r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\Kheppura_sea_level.csv",
+    "Charchanga": r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\Charchanga_sea_level.csv"
+}
+
+
+fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(16, 12), sharex=True)
+
+
+panel_labels = ['(a)', '(b)', '(c)']
+
+for i, (ax, (station, path)) in enumerate(zip(axes, file_paths.items())):
+    df = pd.read_csv(path)
+    df['time'] = pd.to_datetime(df['time'], errors='coerce')
+    df.dropna(subset=['time'], inplace=True)
+    df.set_index('time', inplace=True)
+    df.sort_index(inplace=True)
+
+    df['sea_level_m'] = df['sea_level'] / 1000
+
+
+    df['trend'] = savgol_filter(df['sea_level_m'], window_length=51, polyorder=3)
+    df['sea_level_detrended'] = df['sea_level_m'] - df['trend']
+
+
+    df['tidal_component'] = df['sea_level_m'].rolling(window=24, center=True).mean()
+
+
+    df['sea_level_no_tide'] = df['sea_level_m'] - df['tidal_component']
+
+
+    ax.plot(df.index, df['sea_level_m'], label='Original Sea Level', color=colors['original'], linewidth=1.2)
+    ax.plot(df.index, df['tidal_component'], label='Tidal Component (24hr MA)', color=colors['tidal'], linestyle='--', linewidth=1.6)
+    ax.plot(df.index, df['sea_level_no_tide'], label='Detided Sea Level', color=colors['no_tide'], linewidth=2)
+
+
+    ax.set_title(panel_labels[i], fontsize=25, fontname='Times New Roman', loc='left', weight='normal')
+    ax.set_ylabel('Sea Level (m)', fontsize=11)
+    ax.grid(True, linestyle='--', alpha=0.4)
+
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+
+axes[-1].set_xlabel('Year', fontsize=20)
+
+
+handles, labels = axes[-1].get_legend_handles_labels()
+fig.legend(handles, labels, loc='upper right', fontsize=20, frameon=True)
+
+
+
+
+plt.savefig("sea_level_detrended.png", dpi=1200)
+plt.show()
