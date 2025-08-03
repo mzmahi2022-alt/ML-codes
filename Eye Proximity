@@ -1,0 +1,96 @@
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point, LineString, MultiPoint
+from pyproj import Transformer
+import numpy as np
+import warnings
+
+warnings.filterwarnings('ignore')
+
+
+# Configuration
+SPECIFIC_POINT = Point(91.833, 21.45)
+
+#hironpoint=21.783	89.467
+#cosbazar=21.45	91.833
+#khepupara=89.833, 21.833
+
+SHAPEFILE_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\shapefile\bgd_admbnda_adm1_bbs_20201113.shp"
+CYCLONE_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\interpolated_cyclone_data_hourly - Copy.xlsx"
+OUTPUT_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\cox_landfall.xlsx"
+
+transformer = Transformer.from_crs(4326, 32646, always_xy=True)  # WGS84 to UTM46N
+
+def safe_distance(p1, p2):
+    """Robust distance calculation with error handling"""
+    try:
+        if not p1.is_valid or not p2.is_valid:
+            return np.nan
+        x1, y1 = transformer.transform(p1.x, p1.y)
+        x2, y2 = transformer.transform(p2.x, p2.y)
+        return np.sqrt((x2-x1)**2 + (y2-y1)**2)
+    except:
+        return np.nan
+
+def process_data(df, coastal):
+    """Enhanced processing with coastal zone handling"""
+    results = []
+    
+    for cyclone_id, group in df.groupby('cyclone_id'):
+        try:
+            track = LineString([Point(r['long'], r['lat']) for _, r in group.iterrows()])
+            
+            # Landfall calculation
+            landfall = track.intersection(coastal)
+            lf_point = (min(landfall.geoms, key=lambda p: track.project(p)) 
+                       if isinstance(landfall, MultiPoint) else landfall) if not landfall.is_empty else None
+            
+            for idx, row in group.iterrows():
+                current = Point(row['long'], row['lat'])
+                
+                # Calculate all three distances with fallbacks
+                record = {
+                    'cyclone_id': cyclone_id,
+                    'lat': row['lat'],
+                    'long': row['long'],
+                    'landfall_proximity': safe_distance(current, lf_point) if lf_point else np.nan,
+                    'coast_proximity': safe_distance(current, coastal.interpolate(coastal.project(current))),
+                    'specific_proximity': safe_distance(current, SPECIFIC_POINT)
+                }
+                results.append(record)
+                
+        except Exception as e:
+            print(f"Skipping {cyclone_id}: {str(e)[:50]}")
+            # Fallback for individual points
+            for idx, row in group.iterrows():
+                current = Point(row['long'], row['lat'])
+                results.append({
+                    'cyclone_id': cyclone_id,
+                    'lat': row['lat'],
+                    'long': row['long'],
+                    'landfall_proximity': np.nan,
+                    'coast_proximity': safe_distance(current, coastal.interpolate(coastal.project(current))),
+                    'specific_proximity': safe_distance(current, SPECIFIC_POINT)
+                })
+    
+    return pd.DataFrame(results)
+
+def main():
+    print("Processing cyclone data...")
+    
+    # Load boundaries
+    coastal = gpd.read_file(SHAPEFILE_PATH).geometry.union_all().boundary
+    
+    # Load and clean data
+    df = pd.read_excel(CYCLONE_PATH, engine='openpyxl').dropna(subset=['lat', 'long'])
+    
+    # Process and save
+    result = process_data(df, coastal)
+    result.to_excel(OUTPUT_PATH, index=False, engine='openpyxl')
+    
+    print(f"Success! Results saved to {OUTPUT_PATH}")
+    print("Missing values report:")
+    print(result.isna().sum())
+
+if __name__ == "__main__":
+    main()
