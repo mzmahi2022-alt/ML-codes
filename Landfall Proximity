@@ -1,0 +1,94 @@
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point, LineString, MultiPoint
+from pyproj import Transformer
+import numpy as np
+import warnings
+
+warnings.filterwarnings('ignore')
+
+# Configuration
+SPECIFIC_POINT = Point(91.833, 21.45)  # (longitude, latitude)
+SHAPEFILE_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\shapefile\bgd_admbnda_adm1_bbs_20201113.shp"
+CYCLONE_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\interpolated_cyclone_data_hourly - Copy.xlsx"
+OUTPUT_PATH = r"C:\Users\DFIT\PycharmProjects\pythonProject\Maindata\cyclone_id\cox_landfall2.xlsx"
+
+# Initialize coordinate transformer
+transformer = Transformer.from_crs(4326, 32646, always_xy=True)  # WGS84 to UTM46N
+
+def calculate_utm_distance(point1, point2):
+    """Calculate distance in meters with validation"""
+    try:
+        x1, y1 = transformer.transform(point1.x, point1.y)
+        x2, y2 = transformer.transform(point2.x, point2.y)
+        return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+    except:
+        return np.nan
+
+def process_cyclones(df, coastal_line):
+    """Process cyclones with consistent landfall values"""
+    # Pre-calculate landfall points and specific point distances
+    cyclone_landfalls = {}
+    
+    # First pass: Find landfall points and calculate specific point distance
+    for cyclone_id, group in df.groupby('cyclone_id'):
+        try:
+            track = LineString([Point(r['long'], r['lat']) for _, r in group.iterrows()])
+            landfall = track.intersection(coastal_line)
+            
+            if landfall.is_empty:
+                cyclone_landfalls[cyclone_id] = {
+                    'landfall_point': None,
+                    'specific_distance': np.nan
+                }
+                continue
+                
+            landfall_point = (min(landfall.geoms, key=lambda p: track.project(p)) 
+                            if isinstance(landfall, MultiPoint) else landfall)
+            
+            # Calculate specific point distance once per cyclone
+            specific_dist = calculate_utm_distance(landfall_point, SPECIFIC_POINT)
+            
+            cyclone_landfalls[cyclone_id] = {
+                'landfall_point': landfall_point,
+                'specific_distance': specific_dist
+            }
+        except:
+            cyclone_landfalls[cyclone_id] = {
+                'landfall_point': None,
+                'specific_distance': np.nan
+            }
+    
+    # Second pass: Apply values to all rows
+    df['landfall_proximity'] = df['cyclone_id'].map(
+        lambda x: cyclone_landfalls[x]['specific_distance']
+    )
+    
+    # Calculate coast proximity for each point
+    df['coast_proximity'] = df.apply(
+        lambda r: calculate_utm_distance(
+            Point(r['long'], r['lat']),
+            coastal_line.interpolate(coastal_line.project(Point(r['long'], r['lat'])))
+        ), axis=1
+    )
+    
+    return df
+
+def main():
+    print("🚀 Starting analysis...")
+    
+    # Load Bangladesh coastline
+    coastal_line = gpd.read_file(SHAPEFILE_PATH).geometry.union_all().boundary
+    
+    # Load cyclone data
+    cyclone_df = pd.read_excel(CYCLONE_PATH, engine='openpyxl')
+    
+    # Process data
+    result_df = process_cyclones(cyclone_df, coastal_line)
+    
+    # Save results
+    result_df.to_excel(OUTPUT_PATH, index=False, engine='openpyxl')
+    print(f"✅ Success! Results saved to {OUTPUT_PATH}")
+
+if __name__ == "__main__":
+    main()
